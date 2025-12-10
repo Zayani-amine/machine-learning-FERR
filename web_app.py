@@ -38,11 +38,6 @@ EMOTION_INFO = {
 camera = None
 camera_lock = threading.Lock()
 
-# Initialize detector at module level (for gunicorn)
-detector = EmotionDetector()
-_load_success, _load_message = detector.load_models()
-print(f"Model loading: {'✅ ' + _load_message if _load_success else '❌ ' + _load_message}")
-
 
 class EmotionDetector:
     """Core emotion detection engine using ANN + HOG."""
@@ -120,6 +115,12 @@ class EmotionDetector:
         emotion = self.label_encoder.inverse_transform([prediction])[0]
         
         return emotion, (x, y, w, h), equalized
+
+
+# Initialize detector at module level (for gunicorn)
+detector = EmotionDetector()
+_load_success, _load_message = detector.load_models()
+print(f"Model loading: {'✅ ' + _load_message if _load_success else '❌ ' + _load_message}")
 
 
 # HTML Template
