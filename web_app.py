@@ -35,9 +35,13 @@ EMOTION_INFO = {
 }
 
 # Global variables
-detector = None
 camera = None
 camera_lock = threading.Lock()
+
+# Initialize detector at module level (for gunicorn)
+detector = EmotionDetector()
+_load_success, _load_message = detector.load_models()
+print(f"Model loading: {'✅ ' + _load_message if _load_success else '❌ ' + _load_message}")
 
 
 class EmotionDetector:
@@ -745,14 +749,10 @@ if __name__ == '__main__':
     print("🎭 Facial Expression Detection Web App")
     print("=" * 50)
     
-    # Initialize detector
-    detector = EmotionDetector()
-    success, message = detector.load_models()
-    
-    if success:
-        print(f"✅ {message}")
+    if detector.is_loaded:
+        print(f"✅ Models loaded successfully!")
     else:
-        print(f"❌ Error: {message}")
+        print(f"❌ Models not loaded")
         print("   Make sure models are saved in 'saved_models' folder")
     
     print()
