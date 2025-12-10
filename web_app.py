@@ -78,12 +78,13 @@ class EmotionDetector:
             return False, str(e)
     
     def predict_emotion(self, image):
-        """Predict emotion from an image."""
+        """Predict emotion from an image. Returns emotion, bbox, preprocessed face, and scale factor."""
         if not self.is_loaded:
-            return None, None, None
+            return None, None, None, 1.0
         
         # Resize large images to save memory
         h, w = image.shape[:2]
+        scale = 1.0
         if max(h, w) > MAX_IMAGE_SIZE:
             scale = MAX_IMAGE_SIZE / max(h, w)
             image = cv2.resize(image, None, fx=scale, fy=scale)
@@ -98,10 +99,10 @@ class EmotionDetector:
         )
         
         if len(faces) == 0:
-            return None, None, None
+            return None, None, None, scale
         
-        x, y, w, h = max(faces, key=lambda r: r[2] * r[3])
-        face_region = gray[y:y+h, x:x+w]
+        x, y, fw, fh = max(faces, key=lambda r: r[2] * r[3])
+        face_region = gray[y:y+fh, x:x+fw]
         
         # Preprocess
         resized = cv2.resize(face_region, (IMG_SIZE, IMG_SIZE))
@@ -118,7 +119,7 @@ class EmotionDetector:
         prediction = self.model.predict(features)[0]
         emotion = self.label_encoder.inverse_transform([prediction])[0]
         
-        return emotion, (x, y, w, h), equalized
+        return emotion, (x, y, fw, fh), equalized, scale
 
 
 # Initialize detector at module level (for gunicorn)
@@ -549,12 +550,18 @@ def predict():
     if image is None:
         return jsonify({'success': False, 'error': 'Could not read image'})
     
-    # Predict
-    emotion, bbox, preprocessed = detector.predict_emotion(image)
+    # Predict - returns scale factor for coordinate adjustment
+    emotion, bbox, preprocessed, scale = detector.predict_emotion(image)
     
-    # Draw on image
+    # Draw on image - adjust coordinates for original image size
     if emotion:
         x, y, w, h = bbox
+        # Scale coordinates back to original image size
+        x = int(x / scale)
+        y = int(y / scale)
+        w = int(w / scale)
+        h = int(h / scale)
+        
         info = EMOTION_INFO.get(emotion, {'color': '#00FF00'})
         color_hex = info['color'].lstrip('#')
         color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
