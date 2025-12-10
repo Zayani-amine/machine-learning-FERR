@@ -6,15 +6,19 @@ Run with: python web_app.py
 Open in browser: http://localhost:5000
 """
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
 import cv2
 import numpy as np
 import joblib
 import os
 import base64
 from skimage.feature import hog
+import gc
 
 app = Flask(__name__)
+
+# Memory optimization: limit image size
+MAX_IMAGE_SIZE = 800  # Max dimension in pixels
 
 # ============================================================
 # CONFIGURATION
@@ -32,7 +36,6 @@ EMOTION_INFO = {
     'sad': {'color': '#1E90FF', 'emoji': '😢'},
     'surprise': {'color': '#FF6347', 'emoji': '😲'}
 }
-
 
 class EmotionDetector:
     """Core emotion detection engine using ANN + HOG."""
@@ -78,6 +81,12 @@ class EmotionDetector:
         """Predict emotion from an image."""
         if not self.is_loaded:
             return None, None, None
+        
+        # Resize large images to save memory
+        h, w = image.shape[:2]
+        if max(h, w) > MAX_IMAGE_SIZE:
+            scale = MAX_IMAGE_SIZE / max(h, w)
+            image = cv2.resize(image, None, fx=scale, fy=scale)
         
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -167,42 +176,31 @@ HTML_TEMPLATE = '''
             margin-top: 30px;
         }
         
-        .image-section {
+        .video-section {
             background: rgba(255,255,255,0.05);
             border-radius: 20px;
             padding: 20px;
             border: 1px solid rgba(255,255,255,0.1);
         }
         
-        .image-container {
+        .video-container {
             position: relative;
             width: 100%;
             border-radius: 15px;
             overflow: hidden;
             background: #000;
-            min-height: 300px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        }
+        
+        #videoFeed, #uploadedImage {
+            width: 100%;
+            border-radius: 15px;
+            display: block;
         }
         
         #uploadedImage {
-            width: 100%;
-            border-radius: 15px;
             display: none;
             max-height: 480px;
             object-fit: contain;
-        }
-        
-        .placeholder {
-            color: #666;
-            text-align: center;
-            padding: 40px;
-        }
-        
-        .placeholder-icon {
-            font-size: 4rem;
-            margin-bottom: 20px;
         }
         
         .controls {
@@ -210,7 +208,6 @@ HTML_TEMPLATE = '''
             gap: 15px;
             margin-top: 20px;
             flex-wrap: wrap;
-            justify-content: center;
         }
         
         .btn {
@@ -275,6 +272,20 @@ HTML_TEMPLATE = '''
             margin-bottom: 20px;
         }
         
+        .confidence-bar {
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+            height: 10px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+        
         .face-preview {
             margin-top: 30px;
             padding-top: 20px;
@@ -325,6 +336,18 @@ HTML_TEMPLATE = '''
             .main-content {
                 grid-template-columns: 1fr;
             }
+            
+            .desktop-only {
+                display: none;
+            }
+            
+            .controls {
+                justify-content: center;
+            }
+        }
+        
+        @media (min-width: 901px) {
+            /* On desktop, show Take Photo but it will use file picker */
         }
         
         .loader {
@@ -352,13 +375,13 @@ HTML_TEMPLATE = '''
         </header>
         
         <div class="main-content">
-            <div class="image-section">
-                <div class="image-container">
-                    <div class="placeholder" id="placeholder">
-                        <div class="placeholder-icon">📷</div>
-                        <p>Upload an image or take a photo to detect emotions</p>
+            <div class="video-section">
+                <div class="video-container">
+                    <img id="uploadedImage" src="" alt="Uploaded Image" style="display:none;">
+                    <div id="placeholder" style="color:#666;text-align:center;padding:60px;">
+                        <div style="font-size:4rem;margin-bottom:20px;">📷</div>
+                        <p>Upload an image or take a photo</p>
                     </div>
-                    <img id="uploadedImage" src="" alt="Uploaded Image">
                 </div>
                 
                 <div class="controls">
@@ -477,15 +500,13 @@ HTML_TEMPLATE = '''
         
         imageUpload.addEventListener('change', async (e) => {
             const file = e.target.files[0];
-            if (!file) return;
-            await processImage(file);
+            if (file) await processImage(file);
             e.target.value = '';
         });
         
         cameraCapture.addEventListener('change', async (e) => {
             const file = e.target.files[0];
-            if (!file) return;
-            await processImage(file);
+            if (file) await processImage(file);
             e.target.value = '';
         });
         
@@ -553,6 +574,11 @@ def predict():
     if preprocessed is not None:
         _, face_buffer = cv2.imencode('.jpg', preprocessed)
         face_base64 = base64.b64encode(face_buffer).decode('utf-8')
+    
+    # Clean up memory
+    del image
+    del file_bytes
+    gc.collect()
     
     return jsonify({
         'success': True,
