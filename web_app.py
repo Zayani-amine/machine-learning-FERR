@@ -6,14 +6,13 @@ Run with: python web_app.py
 Open in browser: http://localhost:5000
 """
 
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify
 import cv2
 import numpy as np
 import joblib
 import os
 import base64
 from skimage.feature import hog
-import threading
 
 app = Flask(__name__)
 
@@ -33,10 +32,6 @@ EMOTION_INFO = {
     'sad': {'color': '#1E90FF', 'emoji': '😢'},
     'surprise': {'color': '#FF6347', 'emoji': '😲'}
 }
-
-# Global variables
-camera = None
-camera_lock = threading.Lock()
 
 
 class EmotionDetector:
@@ -172,31 +167,42 @@ HTML_TEMPLATE = '''
             margin-top: 30px;
         }
         
-        .video-section {
+        .image-section {
             background: rgba(255,255,255,0.05);
             border-radius: 20px;
             padding: 20px;
             border: 1px solid rgba(255,255,255,0.1);
         }
         
-        .video-container {
+        .image-container {
             position: relative;
             width: 100%;
             border-radius: 15px;
             overflow: hidden;
             background: #000;
-        }
-        
-        #videoFeed, #uploadedImage {
-            width: 100%;
-            border-radius: 15px;
-            display: block;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         
         #uploadedImage {
+            width: 100%;
+            border-radius: 15px;
             display: none;
             max-height: 480px;
             object-fit: contain;
+        }
+        
+        .placeholder {
+            color: #666;
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .placeholder-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
         }
         
         .controls {
@@ -204,6 +210,7 @@ HTML_TEMPLATE = '''
             gap: 15px;
             margin-top: 20px;
             flex-wrap: wrap;
+            justify-content: center;
         }
         
         .btn {
@@ -268,20 +275,6 @@ HTML_TEMPLATE = '''
             margin-bottom: 20px;
         }
         
-        .confidence-bar {
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
-            height: 10px;
-            margin-top: 10px;
-            overflow: hidden;
-        }
-        
-        .confidence-fill {
-            height: 100%;
-            border-radius: 10px;
-            transition: width 0.3s ease;
-        }
-        
         .face-preview {
             margin-top: 30px;
             padding-top: 20px;
@@ -332,18 +325,6 @@ HTML_TEMPLATE = '''
             .main-content {
                 grid-template-columns: 1fr;
             }
-            
-            .desktop-only {
-                display: none;
-            }
-            
-            .controls {
-                justify-content: center;
-            }
-        }
-        
-        @media (min-width: 901px) {
-            /* On desktop, show Take Photo but it will use file picker */
         }
         
         .loader {
@@ -371,19 +352,16 @@ HTML_TEMPLATE = '''
         </header>
         
         <div class="main-content">
-            <div class="video-section">
-                <div class="video-container">
-                    <img id="videoFeed" src="" alt="Video Feed">
+            <div class="image-section">
+                <div class="image-container">
+                    <div class="placeholder" id="placeholder">
+                        <div class="placeholder-icon">📷</div>
+                        <p>Upload an image or take a photo to detect emotions</p>
+                    </div>
                     <img id="uploadedImage" src="" alt="Uploaded Image">
                 </div>
                 
                 <div class="controls">
-                    <button id="startWebcam" class="btn btn-primary desktop-only">
-                        📷 Start Webcam
-                    </button>
-                    <button id="stopWebcam" class="btn btn-secondary desktop-only" disabled>
-                        ⏹️ Stop Webcam
-                    </button>
                     <div class="file-input-wrapper">
                         <button class="btn btn-secondary">
                             📁 Upload Image
@@ -399,7 +377,7 @@ HTML_TEMPLATE = '''
                 </div>
                 
                 <div id="status" class="status info">
-                    Ready - Click "Start Webcam" or upload an image
+                    Ready - Upload an image or take a photo
                 </div>
             </div>
             
@@ -424,10 +402,8 @@ HTML_TEMPLATE = '''
     </div>
     
     <script>
-        const videoFeed = document.getElementById('videoFeed');
         const uploadedImage = document.getElementById('uploadedImage');
-        const startBtn = document.getElementById('startWebcam');
-        const stopBtn = document.getElementById('stopWebcam');
+        const placeholder = document.getElementById('placeholder');
         const imageUpload = document.getElementById('imageUpload');
         const cameraCapture = document.getElementById('cameraCapture');
         const status = document.getElementById('status');
@@ -435,9 +411,6 @@ HTML_TEMPLATE = '''
         const emotionText = document.getElementById('emotionText');
         const facePreview = document.getElementById('facePreview');
         const loader = document.getElementById('loader');
-        
-        let isWebcamRunning = false;
-        let pollInterval = null;
         
         const emotionInfo = {
             'angry': { color: '#FF4444', emoji: '😠' },
@@ -471,50 +444,7 @@ HTML_TEMPLATE = '''
             status.className = 'status ' + type;
         }
         
-        startBtn.addEventListener('click', () => {
-            videoFeed.style.display = 'block';
-            uploadedImage.style.display = 'none';
-            videoFeed.src = '/video_feed?' + new Date().getTime();
-            isWebcamRunning = true;
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            setStatus('📷 Webcam running...', 'success');
-            
-            // Poll for results
-            pollInterval = setInterval(async () => {
-                try {
-                    const response = await fetch('/get_result');
-                    const data = await response.json();
-                    if (data.emotion) {
-                        updateResult(data.emotion, data.face);
-                    }
-                } catch (e) {}
-            }, 200);
-        });
-        
-        stopBtn.addEventListener('click', async () => {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-            
-            await fetch('/stop_webcam');
-            videoFeed.src = '';
-            isWebcamRunning = false;
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-            setStatus('Webcam stopped', 'info');
-        });
-        
-        imageUpload.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            
-            // Stop webcam if running
-            if (isWebcamRunning) {
-                stopBtn.click();
-            }
-            
+        async function processImage(file) {
             loader.style.display = 'block';
             setStatus('Processing image...', 'info');
             
@@ -531,7 +461,7 @@ HTML_TEMPLATE = '''
                 loader.style.display = 'none';
                 
                 if (data.success) {
-                    videoFeed.style.display = 'none';
+                    placeholder.style.display = 'none';
                     uploadedImage.style.display = 'block';
                     uploadedImage.src = 'data:image/jpeg;base64,' + data.image;
                     updateResult(data.emotion, data.face);
@@ -543,49 +473,19 @@ HTML_TEMPLATE = '''
                 loader.style.display = 'none';
                 setStatus('❌ Error processing image', 'error');
             }
-            
+        }
+        
+        imageUpload.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            await processImage(file);
             e.target.value = '';
         });
         
-        // Camera capture handler (for mobile devices)
         cameraCapture.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            
-            // Stop webcam if running
-            if (isWebcamRunning) {
-                stopBtn.click();
-            }
-            
-            loader.style.display = 'block';
-            setStatus('📸 Processing photo...', 'info');
-            
-            const formData = new FormData();
-            formData.append('image', file);
-            
-            try {
-                const response = await fetch('/predict', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                loader.style.display = 'none';
-                
-                if (data.success) {
-                    videoFeed.style.display = 'none';
-                    uploadedImage.style.display = 'block';
-                    uploadedImage.src = 'data:image/jpeg;base64,' + data.image;
-                    updateResult(data.emotion, data.face);
-                    setStatus('✅ Detected: ' + (data.emotion || 'No face').toUpperCase(), 'success');
-                } else {
-                    setStatus('❌ Error: ' + data.error, 'error');
-                }
-            } catch (error) {
-                loader.style.display = 'none';
-                setStatus('❌ Error processing photo', 'error');
-            }
-            
+            await processImage(file);
             e.target.value = '';
         });
         
@@ -593,7 +493,6 @@ HTML_TEMPLATE = '''
         fetch('/status').then(r => r.json()).then(data => {
             if (!data.loaded) {
                 setStatus('❌ Models not loaded: ' + data.message, 'error');
-                if (startBtn) startBtn.disabled = true;
             }
         });
     </script>
@@ -613,88 +512,6 @@ def status():
         'loaded': detector.is_loaded if detector else False,
         'message': 'Models loaded' if (detector and detector.is_loaded) else 'Models not loaded'
     })
-
-
-# Store latest result for polling
-latest_result = {'emotion': None, 'face': None}
-
-
-def generate_frames():
-    """Generate video frames with emotion detection."""
-    global camera, latest_result
-    
-    with camera_lock:
-        if camera is None:
-            camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    
-    from collections import deque
-    pred_history = deque(maxlen=5)
-    
-    while True:
-        with camera_lock:
-            if camera is None:
-                break
-            success, frame = camera.read()
-        
-        if not success:
-            break
-        
-        # Detect emotion
-        emotion, bbox, preprocessed = detector.predict_emotion(frame)
-        
-        if emotion:
-            pred_history.append(emotion)
-            smoothed = max(set(pred_history), key=pred_history.count)
-            
-            x, y, w, h = bbox
-            info = EMOTION_INFO.get(smoothed, {'color': '#00FF00'})
-            color_hex = info['color'].lstrip('#')
-            color = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
-            
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 3)
-            
-            label = smoothed.upper()
-            font_scale = 1.0
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)
-            cv2.rectangle(frame, (x, y-th-10), (x+tw+10, y), color, -1)
-            cv2.putText(frame, label, (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255,255,255), 2)
-            
-            # Update latest result
-            _, face_buffer = cv2.imencode('.jpg', preprocessed)
-            latest_result = {
-                'emotion': smoothed,
-                'face': base64.b64encode(face_buffer).decode('utf-8')
-            }
-        else:
-            latest_result = {'emotion': None, 'face': None}
-        
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame_bytes = buffer.tobytes()
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-
-@app.route('/video_feed')
-def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route('/get_result')
-def get_result():
-    return jsonify(latest_result)
-
-
-@app.route('/stop_webcam')
-def stop_webcam():
-    global camera
-    with camera_lock:
-        if camera:
-            camera.release()
-            camera = None
-    return jsonify({'success': True})
 
 
 @app.route('/predict', methods=['POST'])
